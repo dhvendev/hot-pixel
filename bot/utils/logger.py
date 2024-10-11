@@ -25,4 +25,3 @@ logger.add(
     enqueue=True
 )
 logger = logger.opt(colors=True)
-
