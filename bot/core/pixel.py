@@ -22,26 +22,24 @@ available_colors = [
     "#2450A4", "#493AC1", "#811E9F", "#A00357", "#6D482F", "#000000"
 ]
 
+#https://notpx.app/api/v1/mining/boost/check/paintReward
+prices = {
+    2: 5,
+    3: 100,
+    4: 200,
+    5: 300,
+    6: None,
+    7: None,
+    8: None,
+}
+
+
+
+
+
 class InvalidStartTgApp(BaseException):
     ...
 
-class InvalidLogin(BaseException):
-    ...
-
-class StartGameError(BaseException):
-    ...
-
-class ClaimRewardError(BaseException):
-    ...
-
-class StartFarmingError(BaseException):
-    ...
-
-class ClaimFarmingError(BaseException):
-    ...
-
-
-#####
 class GetPixelTemplateError(BaseException):
     ...
 
@@ -70,9 +68,9 @@ class Blum:
         self.charges = 0
         self.max_charges = 0
         self.charge_speed = 0
-        self.energy_limit_level = 1
-        self.paint_reward_level = 1
-        self.charge_speed_level = 1
+        self.paint_reward_level = 0
+        self.energy_limit_level = 0
+        self.charge_speed_level = 0
 
         self.template_id = 0
         self.template_img = ""
@@ -271,12 +269,50 @@ class Blum:
             return True
 
 
+    async def upgrade_boost(self, session: CloudflareScraper):
+        price_next_paint_level = prices.get(self.paint_reward_level + 1, None)
+        if not price_next_paint_level:
+            logger.warning(f"{self.name} | <yellow>Upgrade boost (paintReward) failed: price not found</yellow>")
+        price_next_charge_level = prices.get(self.charge_speed_level  + 1, None)
+        if not price_next_charge_level:
+            logger.warning(f"{self.name} | <yellow>Upgrade boost (reChargeSpeed) failed: price not found</yellow>")
+        price_next_energy_level = prices.get(self.energy_limit_level  + 1, None)
+        if not price_next_energy_level:
+            logger.warning(f"{self.name} | <yellow>Upgrade boost (energyLimit) failed: price not found</yellow>")
+        if not price_next_energy_level or not price_next_charge_level or not price_next_paint_level:
+            return False
+        if price_next_paint_level and self.user_balance > price_next_paint_level:
+            async with session.get("https://notpx.app/api/v1/mining/boost/check/paintReward", headers=self.headers) as res:
+                if res.status != 200:
+                    logger.warning(f"{self.name} | <yellow>Upgrade boost failed: {await res.text()})</yellow>")
+                    return False
+                self.user_balance -= price_next_paint_level
+                logger.success(f"{self.name} | <light-green>Upgrade boost (paintReward) success: </light-green><cyan>{self.user_balance}</cyan>")
+                await asyncio.sleep(2)
+        if price_next_charge_level and self.user_balance > price_next_charge_level:
+            async with session.get("https://notpx.app/api/v1/mining/boost/check/reChargeSpeed", headers=self.headers) as res:
+                if res.status != 200:
+                    logger.warning(f"{self.name} | <yellow>Upgrade boost failed: {await res.text()})</yellow>")
+                    return False
+                self.user_balance -= price_next_charge_level
+                logger.success(f"{self.name} | <light-green>Upgrade boost (reChargeSpeed) success: </light-green><cyan>{self.user_balance}</cyan>")
+                await asyncio.sleep(2)
+        if price_next_energy_level and self.user_balance > price_next_energy_level:
+            async with session.get("https://notpx.app/api/v1/mining/boost/check/energyLimit", headers=self.headers) as res:
+                if res.status != 200:
+                    logger.warning(f"{self.name} | <yellow>Upgrade boost failed: {await res.text()})</yellow>")
+                    return False
+                self.user_balance -= price_next_energy_level
+                logger.success(f"{self.name} | <light-green>Upgrade boost (energyLimit) success: </light-green><cyan>{self.user_balance}</cyan>")
+                await asyncio.sleep(2)
+        return True
+
     async def start(self):
-        logger.info(f"Account {self.name} | started")
-        connector = self.proxy.get_connector() if isinstance(self.proxy, Proxy) else None
-        client = CloudflareScraper(headers=self.headers, connector=connector)
-        
+
         while True:
+            logger.info(f"Account {self.name} | started")
+            connector = self.proxy.get_connector() if isinstance(self.proxy, Proxy) else None
+            client = CloudflareScraper(headers=self.headers, connector=connector)
             self.use_template = True
             try:
                 async with client as session:
@@ -288,9 +324,13 @@ class Blum:
                     logger.success(f"Account {self.name} | connected")
                     logger.info(f"Account {self.name} | Balance: {self.user_balance} | Charges: {self.charges}")
                     logger.info(f"Account {self.name} | Boosts: Energy: {self.energy_limit_level} Paint: {self.paint_reward_level} Charge: {self.charge_speed_level}")
+
+                    # Upgrade boost
+                    await self.upgrade_boost(session)
                     
+
                 
-                    # Draw pixels
+                    #Draw pixels
                     if self.charges > 0:
                         # Check template if needed and open
                         try:
