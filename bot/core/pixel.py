@@ -46,7 +46,7 @@ class GetPixelTemplateError(BaseException):
 
 
 
-class Blum:
+class NotPixel:
     def __init__(self, tg_session: Client,
                 settings: BaseSettings,
                 proxy: Proxy | None = None,
@@ -79,7 +79,6 @@ class Blum:
         self.use_template = True
 
 
-        
 
 
     # async def night_sleep_check(self):
@@ -162,26 +161,57 @@ class Blum:
             self.paint_reward_level = boosts.get('paintReward', 0)
             self.charge_speed_level = boosts.get('reChargeSpeed', 0)
             return True
+        
+    async def get_my(self, session: CloudflareScraper) -> bool:
+        async with session.get("https://notpx.app/api/v1/image/template/my", headers=self.headers) as res:
+            if res.status != 200:
+                logger.warning(f"{self.name} | <yellow>Get user my failed: {await res.text()})</yellow>")
+                return False
+            data = await res.json()
+            print(data)
+            self.template_id = data.get('id', 0)
+            self.template_img = data.get('url', "")
+            self.template_x = data.get('x', 0)
+            self.template_y = data.get('y', 0)
+            self.template_size = data.get('imageSize', 0)
+            if self.template_id == 0:
+                logger.warning(f"{self.name} | <yellow>Template not found</yellow>")
+                return False
+            else:
+                self.use_template = True
+                async with session.get(self.template_img, headers=self.headers) as res:
+                    img_data = await res.read()
+                    with open('template.png', 'wb') as f:
+                        f.write(img_data)
+                    img = Image.open(io.BytesIO(img_data))
+                    img = img.convert('RGB')
+                    pixels = list(img.getdata())
+                    self.template_pixels = [[f'#{r:02X}{g:02X}{b:02X}' for r, g, b in pixels[i:i + img.width]] for i in range(0, len(pixels), img.width)]
+                    return True
+                return True
 
 
     async def get_template(self, session: CloudflareScraper) -> bool:
         try:
-            payload = {
-                "limit": 12,
-                "offset": 0
-            }
-            async with session.get("https://notpx.app/api/v1/image/template/list", headers=self.headers, json=payload) as res:
+            async with session.get("https://notpx.app/api/v1/image/template/list?limit=12&offset=60", headers=self.headers) as res:
                 if res.status != 200:
                     logger.warning(f"{self.name} | <yellow>Get list templates failed: {await res.text()})</yellow>")
                     return False
                 data = await res.json()
                 template = choice(data)
                 self.template_id = template.get('templateId', 0)
-                self.template_img = template.get('url', "")
+            for _ in range(2):
+                await asyncio.sleep(1)
+                async with session.get(f"https://notpx.app/api/v1/image/template/{self.template_id}", headers=self.headers) as res:
+                    if res.status != 200:
+                        logger.warning(f"{self.name} | <yellow>Get template image failed: {await res.text()})</yellow>")
+                        return False
+                    data = await res.json()
+                    self.template_img = data.get('url', "")
+                    if not self.template_img:
+                        logger.warning(f"{self.name} | <yellow>Template image not found</yellow>")
+                        return False
             async with session.get(self.template_img, headers=self.headers) as res:
-                if res.status != 200:
-                    logger.warning(f"{self.name} | <yellow>Get template image failed: {await res.text()})</yellow>")
-                    return False
                 img_data = await res.read()
                 with open('template.png', 'wb') as f:
                     f.write(img_data)
@@ -216,9 +246,9 @@ class Blum:
             self.template_x = 0
             self.template_y = 0
             self.template_size = 1000
-        while attempts < 3 and attempts_retry < 3:
+        while attempts < 5 and attempts_retry < 5:
             logger.info(f"{self.name} | Get pixel attempts: {attempts+1} | Retry: {attempts_retry+1}")
-            await asyncio.sleep(uniform(0.5, 3.5))
+            await asyncio.sleep(uniform(5.5, 10.5))
             random_x = randint(self.template_x, self.template_x + self.template_size - 1)
             random_y = randint(self.template_y, self.template_y + self.template_size - 1)
             id_pixel = random_y * 1000 + random_x + 1
@@ -227,13 +257,17 @@ class Blum:
                 if res.status == 504:
                     logger.warning(f"{self.name} | Many requests get this pixel. Try again")
                     attempts_retry += 1
-                    asyncio.sleep(1)
+                    await asyncio.sleep(1)
                     continue
                 if res.status != 200:
                     logger.warning(f"{self.name} | <yellow>Get pixel failed: {await res.text()})</yellow>")
                     return False
                 data = await res.json()
                 pixel = data.get('pixel', {}).get('color', "")
+                if not pixel:
+                    return False
+                
+
                 if not pixel:
                     attempts += 1
                     continue
@@ -251,7 +285,8 @@ class Blum:
                     attempts += 1
                     continue
                 logger.info(f"{self.name} | <light-green>Pixel found: </light-green><cyan>{pixel}</cyan>")
-                return id_pixel, picture_pixel
+                await self.draw_pixel(session, id_pixel, picture_pixel)
+                return id_pixel, pixel
         return False
 
 
@@ -266,6 +301,7 @@ class Blum:
                 return False
             data = await res.json()
             self.user_balance = data.get('balance', 0)
+            logger.info(f"{self.name} | <light-green>Draw pixel: </light-green><cyan>id: {id_pixel}, color:{pixel}, balance: {self.user_balance}</cyan>")
             return True
 
 
@@ -321,10 +357,10 @@ class Blum:
                     res = await self.get_status(session)
                     if not res:
                         return
+                    await self.get_my(session)
                     logger.success(f"Account {self.name} | connected")
-                    logger.info(f"Account {self.name} | Balance: {self.user_balance} | Charges: {self.charges}")
+                    logger.info(f"Account {self.name} | Balance: {self.user_balance} | Charges: {self.charges} | Template: {self.template_id}")
                     logger.info(f"Account {self.name} | Boosts: Energy: {self.energy_limit_level} Paint: {self.paint_reward_level} Charge: {self.charge_speed_level}")
-
                     # Upgrade boost
                     await self.upgrade_boost(session)
                     
@@ -332,38 +368,52 @@ class Blum:
                 
                     #Draw pixels
                     if self.charges > 0:
-                        # Check template if needed and open
-                        try:
-                            if self.use_template:
-                                logger.info(f"Account {self.name} | atempt using template")
-                                res = await self.get_template(session)
-                                if res:
-                                    logger.info(f"Account {self.name} | template open success")
-                                    info = await self.get_template_info(session)
-                                    if info:
-                                        logger.info(f"Account {self.name} | template ready")
-                                        self.use_template = True
-                                    else:
-                                        self.use_template = False
+                        if self.template_id == 0:
+                            self.use_template = True
+                            res = await self.get_template(session)
+                            if res:
+                                logger.info(f"Account {self.name} | template open success")
+                                info = await self.get_template_info(session)
+                                if info:
+                                    logger.info(f"Account {self.name} | template ready")
+                                    self.use_template = True
                                 else:
                                     self.use_template = False
-                        except Exception:
-                            self.use_template = False
+                            else:
+                                self.use_template = False
+                        
+                        # Check template if needed and open
+                        # try:
+                        #     if self.use_template:
+                        #         logger.info(f"Account {self.name} | atempt using template")
+                        #         res = await self.get_template(session)
+                        #         if res:
+                        #             logger.info(f"Account {self.name} | template open success")
+                        #             info = await self.get_template_info(session)
+                        #             if info:
+                        #                 logger.info(f"Account {self.name} | template ready")
+                        #                 self.use_template = True
+                        #             else:
+                        #                 self.use_template = False
+                        #         else:
+                        #             self.use_template = False
+                        # except Exception:
+                        #     self.use_template = False
                         # Start drawing
                         logger.info(f"Account {self.name} | start draw pixels")
                         while self.charges > 0:
                             await asyncio.sleep(1)
                             self.charges -= 1
                             try:
-                                res = await self.get_pixel_on_board(session)
-                                if res:
-                                    pixel_id, pixel_color = res
-                                    logger.info(f"{self.name} | Draw pixel id: {pixel_id} color: {pixel_color}")
-                                    res = await self.draw_pixel(session, pixel_id, pixel_color)
-                                    if not res:
-                                        logger.warning(f"{self.name} | <yellow>Draw pixel failed</yellow>")
-                                        continue
-                                    logger.info(f"{self.name} | <light-green>Draw pixel success</light-green> Balance: <cyan>{self.user_balance}</cyan>")
+                                await self.get_pixel_on_board(session)
+                                # if res:
+                                #     pixel_id, pixel_color = res
+                                #     logger.info(f"{self.name} | Draw pixel id: {pixel_id} color: {pixel_color}")
+                                #     res = await self.draw_pixel(session, pixel_id, pixel_color)
+                                #     if not res:
+                                #         logger.warning(f"{self.name} | <yellow>Draw pixel failed</yellow>")
+                                #         continue
+                                #     logger.info(f"{self.name} | <light-green>Draw pixel success</light-green> Balance: <cyan>{self.user_balance}</cyan>")
                             except Exception as e:
                                 print(e)
                     else:
@@ -393,7 +443,7 @@ async def run_gamer(tg_session: tuple[Client, Proxy, str], settings) -> None:
         settings (Settings): The settings to use for this Gamer instance.
     """
     tg_session, proxy, user_agent = tg_session
-    gamer = Blum(tg_session=tg_session, settings=settings, proxy=proxy, user_agent=user_agent)
+    gamer = NotPixel(tg_session=tg_session, settings=settings, proxy=proxy, user_agent=user_agent)
     try:
         sleep = randint(1, 5)
         logger.info(f"Account {gamer.name} | ready in {sleep}s")
