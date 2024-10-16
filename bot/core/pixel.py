@@ -193,7 +193,7 @@ class NotPixel:
 
     async def get_template(self, session: CloudflareScraper) -> bool:
         try:
-            async with session.get("https://notpx.app/api/v1/image/template/list?limit=12&offset=60", headers=self.headers) as res:
+            async with session.get("https://notpx.app/api/v1/image/template/list?limit=12&offset=216", headers=self.headers) as res:
                 if res.status != 200:
                     logger.warning(f"{self.name} | <yellow>Get list templates failed: {await res.text()})</yellow>")
                     return False
